@@ -1,5 +1,7 @@
 # Development Rules
 
+This fork adds a Kiro provider on `feat/kiro-provider`. Before merging upstream or changing Kiro, read [`packages/ai/src/providers/kiro/AGENTS.md`](./packages/ai/src/providers/kiro/AGENTS.md).
+
 ## Default Context
 
 This repo contains multiple packages, but **`packages/coding-agent/`** is the primary focus. Unless otherwise specified, assume work refers to this package.

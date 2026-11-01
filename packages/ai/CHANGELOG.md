@@ -606,10 +606,6 @@
 - Fixed compatibility with Command Code DeepSeek and other DeepSeek-family models by preserving the reasoning context required for warm OpenAI Responses sessions and correctly handling incomplete DSML tool-call wrappers in visible output.
 
 ## [18.6.0] - 2026-10-03
-### Added
-
-- Added the native Kiro provider: sign in with AWS IAM Identity Center, AWS Builder ID, or a Kiro API key (`KIRO_API_KEY`), and stream responses with reasoning, tool calls, and images ([#14215](https://github.com/can1357/oh-my-pi/pull/14215) by [@ajdiyassin](https://github.com/ajdiyassin)).
-- Adapted Kiro requests to its wire limits: tool name aliases, schema keyword stripping, tool and image budgets, reasoning replay, usage-limit and refusal classification, and the alternate runtime host.
 
 ### Fixed
 
