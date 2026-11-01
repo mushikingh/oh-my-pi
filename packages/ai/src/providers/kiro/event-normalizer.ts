@@ -1,7 +1,7 @@
 import { isRecord } from "@oh-my-pi/pi-utils";
 import type { EventStreamMessage } from "../aws-eventstream";
 import { kiroEventStreamError } from "./errors";
-import type { KiroNormalizedEvent, KiroUsageMetrics } from "./types";
+import type { KiroNormalizedEvent, KiroRefusalDetails, KiroUsageMetrics } from "./types";
 
 const METRIC_ALIASES: Readonly<Record<keyof KiroUsageMetrics, readonly string[]>> = {
 	inputTokens: ["inputTokens", "input_tokens", "promptTokens", "prompt_tokens"],
@@ -70,6 +70,20 @@ function normalizeMetrics(value: unknown): KiroUsageMetrics | undefined {
 }
 
 /** Normalize a CRC-decoded frame; never searches raw binary bytes for JSON patterns. */
+/** Advisory copy on a filter stop: an unexpected shape drops the details, never the refusal itself. */
+function refusalDetails(payload: Record<string, unknown>): KiroRefusalDetails | undefined {
+	const stopDetails = payload.stopDetails;
+	if (!isRecord(stopDetails) || !isRecord(stopDetails.refusal)) return undefined;
+	const refusal = stopDetails.refusal;
+	const field = (key: string, max: number): string | undefined => {
+		const value = refusal[key];
+		return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
+	};
+	const category = field("category", 64);
+	const explanation = field("explanation", 400);
+	return category || explanation ? { category, explanation } : undefined;
+}
+
 export function normalizeKiroFrame(message: EventStreamMessage): KiroNormalizedEvent {
 	const messageType = message.headers[":message-type"];
 	const eventType = message.headers[":event-type"];
@@ -87,6 +101,7 @@ export function normalizeKiroFrame(message: EventStreamMessage): KiroNormalizedE
 			type: "metadata",
 			requestId: typeof payload.requestId === "string" ? payload.requestId : undefined,
 			stopReason: typeof payload.stopReason === "string" ? payload.stopReason : undefined,
+			refusal: refusalDetails(payload),
 		};
 	}
 	if (eventType === "reasoningContentEvent") {
@@ -94,6 +109,7 @@ export function normalizeKiroFrame(message: EventStreamMessage): KiroNormalizedE
 			type: "reasoning",
 			text: typeof payload.text === "string" ? payload.text : undefined,
 			signature: typeof payload.signature === "string" ? payload.signature : undefined,
+			redactedContent: typeof payload.redactedContent === "string" ? payload.redactedContent : undefined,
 		};
 	}
 	if (eventType === "assistantResponseEvent") {

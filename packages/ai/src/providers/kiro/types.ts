@@ -47,9 +47,13 @@ export interface KiroUserInputMessage {
 	};
 }
 
+/** Exactly one member is set: the wire validates each member's shape. */
+export type KiroReasoningContent = { signature: string } | { redactedContent: string };
+
 export interface KiroAssistantResponseMessage {
 	content: string;
 	toolUses?: KiroToolUse[];
+	reasoningContent?: KiroReasoningContent;
 }
 
 export interface KiroHistoryEntry {
@@ -64,7 +68,7 @@ export type KiroAnthropicRequestFields = {
 };
 
 export type KiroGptRequestFields = {
-	reasoning: { mode: "standard"; effort: string };
+	reasoning: { effort: string };
 };
 
 export type KiroModelRequestFields = KiroAnthropicRequestFields | KiroGptRequestFields;
@@ -90,9 +94,15 @@ export interface KiroUsageMetrics {
 	reasoningTokens?: number;
 }
 
+/** Why a safety filter stopped the response. Upstream text, so it is bounded on the way in. */
+export interface KiroRefusalDetails {
+	category?: string;
+	explanation?: string;
+}
+
 export type KiroNormalizedEvent =
-	| { type: "metadata"; requestId?: string; stopReason?: string }
-	| { type: "reasoning"; text?: string; signature?: string }
+	| { type: "metadata"; requestId?: string; stopReason?: string; refusal?: KiroRefusalDetails }
+	| { type: "reasoning"; text?: string; signature?: string; redactedContent?: string }
 	| { type: "content"; content: string; stopReason?: string }
 	| {
 			type: "tool";

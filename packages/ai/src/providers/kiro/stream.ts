@@ -31,16 +31,39 @@ import {
 	KiroApiError,
 	KiroStreamError,
 	kiroHttpError,
+	isKiroContentFilterStop,
+	kiroContentFilterError,
 } from "./errors";
 
 import { mergeKiroUsage, normalizeKiroFrame } from "./event-normalizer";
 import { KiroToolAssembler } from "./tool-assembler";
+import { createKiroToolNames } from "./tools";
 import { transformKiroRequest } from "./transform";
-import type { KiroNormalizedEvent, KiroOptions, KiroStreamCredential, KiroUsageMetrics } from "./types";
+import type {
+	KiroNormalizedEvent,
+	KiroOptions,
+	KiroRefusalDetails,
+	KiroStreamCredential,
+	KiroUsageMetrics,
+} from "./types";
 
 const KIRO_RUNTIME_TARGET = "KiroRuntimeService.GenerateAssistantResponse";
 const KIRO_USER_AGENT = "oh-my-pi/kiro-api";
 const MAX_PRE_OUTPUT_RECOVERY_ATTEMPTS = 1;
+const KIRO_GATEWAY_FAILURE_STATUSES = new Set([502, 503, 504]);
+const KIRO_CANONICAL_RUNTIME_HOST = /^runtime\.([a-z]{2}(?:-[a-z0-9]+)+-\d+)\.kiro\.dev$/;
+
+/**
+ * The same service answers on `q.{region}.amazonaws.com`, which keeps a gateway outage or a DNS
+ * failure on `runtime.{region}.kiro.dev` from failing the request. Other hosts have no alternate.
+ */
+export function kiroAlternateRuntimeUrl(runtimeUrl: string): string | undefined {
+	const url = URL.parse(runtimeUrl);
+	const region = url && KIRO_CANONICAL_RUNTIME_HOST.exec(url.hostname)?.[1];
+	if (!url || !region) return undefined;
+	url.hostname = `q.${region}.amazonaws.com`;
+	return url.toString();
+}
 
 function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]): Record<string, string> {
 	const merged: Record<string, string> = {};
@@ -77,9 +100,11 @@ interface AttemptState {
 	inlineBuffer: string;
 	inlineClose?: string;
 	pendingThinkingSignature?: string;
+	lastThinkingIndex?: number;
 	usage: KiroUsageMetrics;
 	contextUsagePercentage?: number;
 	stopReason?: string;
+	refusal?: KiroRefusalDetails;
 	semanticEvents: number;
 	toolAssembler: KiroToolAssembler;
 }
@@ -206,15 +231,20 @@ function emitThinking(
 ): void {
 	if (signature !== undefined) state.pendingThinkingSignature = signature;
 	if (!text) {
-		if (state.thinkingIndex !== undefined && signature !== undefined) {
-			const block = state.output.content[state.thinkingIndex] as ThinkingContent;
+		if (signature === undefined) return;
+		// The event can arrive after its block closed, since Kiro ends a turn with it, and the
+		// signature must still land on a block to be replayed next turn.
+		const index = state.thinkingIndex ?? state.lastThinkingIndex;
+		if (index !== undefined) {
+			const block = state.output.content[index] as ThinkingContent;
 			block.thinkingSignature = signature;
+			return;
 		}
-		return;
 	}
 	markVisible(state, stream);
 	if (state.thinkingIndex === undefined) {
 		state.thinkingIndex = state.output.content.length;
+		state.lastThinkingIndex = state.thinkingIndex;
 		state.output.content.push({ type: "thinking", thinking: "" });
 		stream.push({ type: "thinking_start", contentIndex: state.thinkingIndex, partial: state.output });
 	}
@@ -415,14 +445,18 @@ export function streamKiro(
 		let state = createAttempt(model, stream, timestamp);
 		try {
 			const credential = parseCredential(typeof options.apiKey === "string" ? options.apiKey : undefined);
-			const runtimeBaseUrl = resolveKiroRuntimeBaseUrl(model, credential);
+			let runtimeBaseUrl = resolveKiroRuntimeBaseUrl(model, credential);
+			let triedAlternateHost = false;
 			let recoveryAttempt = 0;
 			// Resolved once per request: caller option → environment override → shared helper default.
 			const idleTimeoutMs = options.streamIdleTimeoutMs ?? getStreamIdleTimeoutMs();
 			const firstEventTimeoutMs = options.streamFirstEventTimeoutMs ?? getStreamFirstEventTimeoutMs(idleTimeoutMs);
 			while (true) {
 				state = createAttempt(model, stream, timestamp);
+				const toolNames = createKiroToolNames();
 				let payload = transformKiroRequest(model, context, {
+					toolNames,
+					toolChoice: options.toolChoice,
 					reasoning: options.reasoning,
 					disableReasoning: options.disableReasoning,
 					hideThinkingSummary: options.hideThinkingSummary,
@@ -452,7 +486,14 @@ export function streamKiro(
 					});
 				} catch (error) {
 					watchdog.clear();
-					throw error;
+					const alternate =
+						triedAlternateHost || options.signal?.aborted || !AIError.classifyNetworkCause(error)
+							? undefined
+							: kiroAlternateRuntimeUrl(runtimeBaseUrl);
+					if (!alternate) throw error;
+					triedAlternateHost = true;
+					runtimeBaseUrl = alternate;
+					continue;
 				}
 				// The success path hands the body to the idle-timeout iterator, which
 				// owns its own deadline. The error path still needs this watchdog:
@@ -462,6 +503,17 @@ export function streamKiro(
 					response.headers.get("x-amzn-requestid") ?? response.headers.get("x-amz-request-id");
 				await notifyProviderResponse(options, response, model, headerRequestId);
 				if (!response.ok) {
+					const alternate =
+						!triedAlternateHost && KIRO_GATEWAY_FAILURE_STATUSES.has(response.status)
+							? kiroAlternateRuntimeUrl(runtimeBaseUrl)
+							: undefined;
+					if (alternate) {
+						watchdog.clear();
+						void response.body?.cancel().catch(() => {});
+						triedAlternateHost = true;
+						runtimeBaseUrl = alternate;
+						continue;
+					}
 					try {
 						const error = await kiroHttpError(response, watchdog.signal);
 						if (
@@ -521,17 +573,23 @@ export function streamKiro(
 							case "metadata":
 								if (event.requestId) state.output.responseId = event.requestId;
 								if (event.stopReason) state.stopReason = event.stopReason;
+								if (event.refusal) state.refusal = event.refusal;
 								break;
 							case "reasoning":
 								state.nativeReasoning = true;
 								emitThinking(state, stream, event.text ?? "", event.signature);
+								if (event.redactedContent) {
+									state.output.content.push({ type: "redactedThinking", data: event.redactedContent });
+								}
 								break;
 							case "content":
 								processInlineContent(state, stream, event.content);
 								if (event.stopReason) state.stopReason = event.stopReason;
 								break;
 							case "tool":
-								state.toolAssembler.update(event);
+								state.toolAssembler.update(
+									event.name ? { ...event, name: toolNames.restore(event.name) } : event,
+								);
 								break;
 							case "contextUsage":
 								state.contextUsagePercentage = event.percentage;
@@ -554,6 +612,9 @@ export function streamKiro(
 						continue;
 					}
 					throw error;
+				}
+				if (state.stopReason && isKiroContentFilterStop(state.stopReason)) {
+					throw kiroContentFilterError(state.stopReason, state.refusal);
 				}
 				state.toolAssembler.finishAll(state.stopReason === "MAX_TOKENS" || state.stopReason === "LENGTH");
 				finalizeInline(state, stream);

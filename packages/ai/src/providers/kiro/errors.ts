@@ -1,6 +1,7 @@
 import { isRecord } from "@oh-my-pi/pi-utils";
 import { readBoundedBytes } from "@oh-my-pi/pi-utils/bounded-json";
 import * as AIError from "../../error";
+import type { KiroRefusalDetails } from "./types";
 
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 const MAX_ERROR_MESSAGE_CHARS = 500;
@@ -50,6 +51,33 @@ export class KiroStreamError extends AIError.ProviderResponseError {
 	}
 }
 
+const QUOTA_REASONS = new Set(["MONTHLY_REQUEST_COUNT", "OVERAGE_REQUEST_LIMIT_EXCEEDED"]);
+const SUSPENSION_WORDS = ["temporarily suspended", "temporarily is suspended", "locked your account", "locked it as a"];
+
+/**
+ * What a Kiro rejection means for the session, from its `reason` and `message`. Exact tokens only,
+ * so that ordinary 400s and 403s stay plain errors. A quota is not retried, and it lets the advisor
+ * pause or fall back instead of burning retries; an overflow triggers compaction.
+ */
+function kiroRejectionFlag(status: number | undefined, reason: unknown, message: unknown): number | undefined {
+	const text = typeof message === "string" ? message.toLowerCase() : "";
+	const reasonText = typeof reason === "string" ? reason : "";
+	if (reasonText === "CONTENT_LENGTH_EXCEEDS_THRESHOLD" || text.includes("content length exceeds"))
+		return AIError.create(AIError.Flag.ContextOverflow);
+	if (QUOTA_REASONS.has(reasonText) && (status === undefined || status === 400 || status === 429))
+		return AIError.create(AIError.Flag.UsageLimit);
+	if (status === 403 && (reasonText === "TEMPORARILY_SUSPENDED" || SUSPENSION_WORDS.some(word => text.includes(word))))
+		return AIError.create(AIError.Flag.AccountPolicy);
+	return undefined;
+}
+
+/** Reasons the model can act on stay readable; a gated model naming profileArn needs a fresh login, not a retry. */
+function withKiroHint(detail: string | undefined): string | undefined {
+	if (detail?.includes("profileArn") && detail.includes("required"))
+		return `${detail} (run /login kiro again so the profile is captured)`;
+	return detail;
+}
+
 export async function kiroHttpError(response: Response, signal?: AbortSignal): Promise<KiroApiError> {
 	const requestId = boundedIdentifier(
 		response.headers.get("x-amzn-requestid") ?? response.headers.get("x-amz-request-id"),
@@ -69,10 +97,12 @@ export async function kiroHttpError(response: Response, signal?: AbortSignal): P
 		typeof codeValue === "string" ? codeValue.split("#").at(-1) : undefined,
 		MAX_ERROR_CODE_CHARS,
 	);
-	const detail = boundedMessage(parsed?.message) ?? boundedMessage(parsed?.reason);
+	const detail = withKiroHint(boundedMessage(parsed?.message) ?? boundedMessage(parsed?.reason));
 	const message = `Kiro HTTP ${response.status}${code ? ` ${code}` : ""}${detail ? `: ${detail}` : ""}`;
 	const error = new KiroApiError(message, response.status, { headers: response.headers, code, requestId });
-	return response.status === 413 ? AIError.attach(error, AIError.create(AIError.Flag.ContextOverflow)) : error;
+	if (response.status === 413) return AIError.attach(error, AIError.create(AIError.Flag.ContextOverflow));
+	const flag = kiroRejectionFlag(response.status, parsed?.reason, parsed?.message);
+	return flag === undefined ? error : AIError.attach(error, flag);
 }
 
 /**
@@ -125,9 +155,12 @@ export function kiroEventStreamError(
 	// A known shape carries the HTTP-equivalent status so the shared retry
 	// classifier can see through the HTTP 200 wrapper.
 	const status = codeValue === undefined ? undefined : kiroStreamExceptionStatus(codeValue);
-	return status === undefined
-		? new KiroStreamError(message, { code, requestId })
-		: new KiroApiError(message, status, { code, requestId });
+	const error =
+		status === undefined
+			? new KiroStreamError(message, { code, requestId })
+			: new KiroApiError(message, status, { code, requestId });
+	const flag = kiroRejectionFlag(status, value?.reason, value?.message);
+	return flag === undefined ? error : AIError.attach(error, flag);
 }
 
 export function isKiroCapacityError(error: unknown): boolean {
@@ -150,4 +183,19 @@ export function isKiroTransientToolFormatError(error: unknown): boolean {
 		.toLowerCase()
 		.replace(/[.\s]+$/u, "")
 		.endsWith(INVALID_TOOL_USE_FORMAT);
+}
+
+/** Stops where a safety filter withheld the answer, as opposed to the model finishing. */
+export function isKiroContentFilterStop(stopReason: string | undefined): boolean {
+	return stopReason === "CONTENT_FILTERED" || stopReason === "GUARDRAIL_INTERVENED";
+}
+
+/** Terminal and non-retryable: resending the same content gets the same verdict. */
+export function kiroContentFilterError(stopReason: string, refusal?: KiroRefusalDetails): KiroStreamError {
+	const category = refusal?.category ? `, category ${refusal.category}` : "";
+	const explanation = refusal?.explanation ? `: ${refusal.explanation}` : "";
+	return new KiroStreamError(`Kiro blocked the response (${stopReason}${category})${explanation}`, {
+		code: stopReason,
+		kind: "content-blocked",
+	});
 }

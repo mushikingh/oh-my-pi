@@ -69,6 +69,24 @@ Run `/login kiro` again when:
 - model discovery is using the wrong profile or endpoint; or
 - a present registration endpoint fails validation.
 
+## What Kiro limits
+
+Kiro's wire is stricter than most providers, so OMP adapts each request rather than let the turn fail:
+
+- **Tool names** outside `^[a-zA-Z0-9_-]{1,64}$`, which MCP names often are, go out under a safe alias and come back under their real name.
+- **Tool schemas** lose the JSON Schema keywords the validator rejects (`pattern`, `format`, `minLength`, `additionalProperties` and similar), and a root `oneOf`, `anyOf` or `allOf` is flattened. OMP still validates arguments itself.
+- **Tool catalogs** hold at most 48 tools and 96 KB, filled in order. The model is told which tools did not fit that turn. Descriptions are cut at 9,216 characters.
+- **Images** stay in history. A request holds at most 20 per message, 100 overall and 18 MiB of image data. The oldest go first, and each affected message says so.
+- **Reasoning** is replayed on the next turn, but only to the model that wrote it.
+
+## Failures that change what happens next
+
+- **Monthly or overage limits** (`MONTHLY_REQUEST_COUNT`, `OVERAGE_REQUEST_LIMIT_EXCEEDED`) count as usage limits. They are not retried, and the advisor pauses or moves to its fallback.
+- **A suspended account** counts as an account policy denial.
+- **`CONTENT_LENGTH_EXCEEDS_THRESHOLD`** counts as a context overflow, which triggers compaction.
+- **`CONTENT_FILTERED` and `GUARDRAIL_INTERVENED`** end the turn as a refusal, with Kiro's category and explanation when it sends them.
+- **HTTP 502, 503 or 504, or a connection failure,** on `runtime.{region}.kiro.dev` moves the request once to `q.{region}.amazonaws.com`, which serves the same API.
+
 ## Transient request failures
 
 Two Kiro runtime responses are retried automatically once, with an identical request body and a fresh request id, and only before any output has been shown:

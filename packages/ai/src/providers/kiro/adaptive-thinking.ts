@@ -51,7 +51,8 @@ export function buildKiroModelRequestFields(
 		};
 	}
 	if (model.thinking.mode === "effort") {
-		return { reasoning: { mode: "standard", effort: model.thinking.effortMap?.[effort] ?? effort } };
+		// `mode` is left out: GPT-5.6 schemas accept only `effort`, and those that still list `mode` default it to standard.
+		return { reasoning: { effort: model.thinking.effortMap?.[effort] ?? effort } };
 	}
 	return undefined;
 }

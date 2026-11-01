@@ -126,7 +126,7 @@ describe("Kiro request transformation", () => {
 		expect(historicalResult?.toolUseId).toBe(historicalAssistant?.toolUses?.[0]?.toolUseId);
 	});
 
-	test("preserves an empty active-tool description without inventing guidance", () => {
+	test("names the tool when its description is empty, since the wire needs one", () => {
 		const emptyDescriptionTool: Tool<typeof lookupParameters> = {
 			...lookupTool,
 			description: "",
@@ -139,7 +139,7 @@ describe("Kiro request transformation", () => {
 		const description = transformKiroRequest(createModel(), context).conversationState.currentMessage.userInputMessage
 			.userInputMessageContext?.tools?.[0]?.toolSpecification.description;
 
-		expect(description).toBe("");
+		expect(description).toBe("Tool: lookup");
 	});
 
 	test("uses the continuation prompt for image-only current turns", () => {
@@ -219,7 +219,7 @@ describe("Kiro request transformation", () => {
 		expect(disabled.additionalModelRequestFields).toBeUndefined();
 	});
 
-	test("serializes effort reasoning with the standard runtime mode", () => {
+	test("serializes effort reasoning without the legacy mode field", () => {
 		const model = createModel({
 			reasoning: true,
 			thinking: {
@@ -232,10 +232,10 @@ describe("Kiro request transformation", () => {
 		const context: Context = { messages: [{ role: "user", content: "Think", timestamp: 0 }] };
 
 		expect(transformKiroRequest(model, context, { reasoning: Effort.Minimal }).additionalModelRequestFields).toEqual({
-			reasoning: { mode: "standard", effort: "none" },
+			reasoning: { effort: "none" },
 		});
 		expect(transformKiroRequest(model, context, { reasoning: Effort.High }).additionalModelRequestFields).toEqual({
-			reasoning: { mode: "standard", effort: "high" },
+			reasoning: { effort: "high" },
 		});
 	});
 
@@ -376,10 +376,10 @@ describe("Kiro request transformation", () => {
 		const resultEntry = history.find(entry => entry.userInputMessage?.userInputMessageContext?.toolResults)
 			?.userInputMessage?.userInputMessageContext?.toolResults?.[0];
 
-		expect(resultEntry?.content).toEqual([{ text: "(image omitted from history)" }]);
+		expect(resultEntry?.content).toEqual([{ text: "(see attached image)" }]);
 		expect(
 			history.find(entry => entry.userInputMessage?.userInputMessageContext?.toolResults)?.userInputMessage?.images,
-		).toBeUndefined();
+		).toEqual([{ format: "png", source: { bytes: "aGVsbG8=" } }]);
 	});
 
 	test("batches images from consecutive historical tool results", () => {
@@ -421,9 +421,12 @@ describe("Kiro request transformation", () => {
 		expect(resultEntry?.userInputMessageContext?.toolResults?.map(result => result.toolUseId)).toEqual(
 			assistantEntries.flatMap(entry => entry.assistantResponseMessage?.toolUses?.map(use => use.toolUseId) ?? []),
 		);
-		expect(resultEntry?.images).toBeUndefined();
+		expect(resultEntry?.images).toEqual([
+			{ format: "png", source: { bytes: "aW1nLWE=" } },
+			{ format: "webp", source: { bytes: "aW1nLWI=" } },
+		]);
 	});
-	test("marks stripped image-only user history without emitting an empty turn", () => {
+	test("keeps image-only user history without emitting an empty turn", () => {
 		const context: Context = {
 			messages: [
 				{
@@ -439,8 +442,8 @@ describe("Kiro request transformation", () => {
 		const historicalUser = transformKiroRequest(createModel(), context).conversationState.history?.[0]
 			?.userInputMessage;
 
-		expect(historicalUser?.content).toBe("(image omitted from history)");
-		expect(historicalUser?.images).toBeUndefined();
+		expect(historicalUser?.content).toBe("(see attached image)");
+		expect(historicalUser?.images).toEqual([{ format: "png", source: { bytes: "aGVsbG8=" } }]);
 	});
 
 	test("replays visible assistant text without provisional reasoning", () => {
@@ -472,7 +475,7 @@ describe("Kiro request transformation", () => {
 		expect(content).not.toContain("discarded hypothesis");
 	});
 
-	test("uses empty user content for structured historical tool results", () => {
+	test("gives a structured historical tool result a carrier sentence", () => {
 		const context: Context = {
 			messages: [
 				{ role: "user", content: "Start", timestamp: 0 },
@@ -487,7 +490,7 @@ describe("Kiro request transformation", () => {
 			entry => entry.userInputMessage?.userInputMessageContext?.toolResults,
 		)?.userInputMessage;
 
-		expect(carrier?.content).toBe("");
+		expect(carrier?.content).toBe("The requested tool result is attached.");
 		expect(carrier?.userInputMessageContext?.toolResults).toHaveLength(1);
 	});
 
@@ -522,7 +525,7 @@ describe("Kiro request transformation", () => {
 		expect(() => transformKiroRequest(createModel(), context)).toThrow(/duplicate tool call id/);
 	});
 
-	test("truncates tool results to 25000 valid UTF-8 bytes", () => {
+	test("sends a large tool result whole", () => {
 		const context: Context = {
 			messages: [
 				{ role: "user", content: "Start", timestamp: 0 },
@@ -534,10 +537,7 @@ describe("Kiro request transformation", () => {
 		const result = transformKiroRequest(createModel(), context).conversationState.currentMessage.userInputMessage
 			.userInputMessageContext?.toolResults?.[0]?.content[0]?.text;
 
-		expect(result).toBeDefined();
-		expect(Buffer.byteLength(result ?? "", "utf8")).toBeLessThanOrEqual(25_000);
-		expect(result).toEndWith("\n...[truncated]");
-		expect(result).not.toContain("�");
+		expect(result).toBe("é".repeat(20_000));
 	});
 
 	test("classifies oversized local history as context overflow", () => {
