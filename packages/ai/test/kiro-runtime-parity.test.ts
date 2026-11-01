@@ -171,6 +171,33 @@ describe("Kiro content filter stops", () => {
 });
 
 describe("Kiro reasoning capture", () => {
+	for (const [label, frames] of [
+		["no events at all", []],
+		["only encrypted reasoning", [frame("reasoningContentEvent", { redactedContent: "aGVsbG8=" })]],
+	] as const) {
+		test(`a reply with ${label} completes once for a caller that accepts silence`, async () => {
+			const { fetch, urls } = scripted(eventResponse(...frames));
+			const silent = await streamKiro(createModel(), CONTEXT, {
+				apiKey: API_KEY,
+				fetch,
+				acceptEmptyResponse: true,
+			}).result();
+			expect(silent.stopReason).toBe("stop");
+			expect(urls).toHaveLength(1);
+		});
+
+		test(`a reply with ${label} is still an error on a normal turn`, async () => {
+			const { fetch, urls } = scripted(eventResponse(...frames), eventResponse(...frames));
+			const result = await streamKiro(createModel(), CONTEXT, {
+				apiKey: API_KEY,
+				fetch,
+				providerRetryWait: async () => {},
+			}).result();
+			expect(result.stopReason).toBe("error");
+			expect(urls).toHaveLength(2);
+		});
+	}
+
 	test("a reasoning-only reply is a completed turn for a caller that accepts silence", async () => {
 		const respond = () =>
 			scripted(eventResponse(frame("reasoningContentEvent", { text: "Nothing to flag.", signature: "CAQS" })));

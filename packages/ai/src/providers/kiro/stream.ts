@@ -619,15 +619,21 @@ export function streamKiro(
 				state.toolAssembler.finishAll(state.stopReason === "MAX_TOKENS" || state.stopReason === "LENGTH");
 				finalizeInline(state, stream);
 				if (!state.visible) {
-					if (recoveryAttempt < MAX_PRE_OUTPUT_RECOVERY_ATTEMPTS) {
-						recoveryAttempt++;
-						await waitBeforeRecovery(options, options.signal);
-						continue;
+					// A silent reply can carry nothing at all, or only encrypted reasoning. Silence is a
+					// valid result for a caller that accepts it, such as an advisor with nothing to flag.
+					if (options.acceptEmptyResponse === true) {
+						markVisible(state, stream);
+					} else {
+						if (recoveryAttempt < MAX_PRE_OUTPUT_RECOVERY_ATTEMPTS) {
+							recoveryAttempt++;
+							await waitBeforeRecovery(options, options.signal);
+							continue;
+						}
+						throw new KiroStreamError("Kiro stream ended without visible output", {
+							code: "EMPTY_STREAM",
+							kind: "incomplete-stream",
+						});
 					}
-					throw new KiroStreamError("Kiro stream ended without visible output", {
-						code: "EMPTY_STREAM",
-						kind: "incomplete-stream",
-					});
 				}
 				if (!hasVisibleAssistantContent(state.output) && options.acceptEmptyResponse !== true) {
 					throw new KiroStreamError("Kiro stream ended with reasoning but without final output", {

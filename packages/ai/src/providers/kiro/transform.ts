@@ -33,7 +33,6 @@ const CONTINUATION_PROMPT = prompt.render(continuationPrompt);
 const HISTORICAL_TOOL_DESCRIPTION = prompt.render(historicalToolDescriptionPrompt);
 const IMAGE_PLACEHOLDER = "(see attached image)";
 const EMPTY_TOOL_RESULT = "The tool completed without textual output.";
-const TOOL_RESULT_CARRIER = "The requested tool result is attached.";
 const HISTORY_BASE_BYTES = 850_000;
 const HISTORY_BASE_TOKENS = 200_000;
 
@@ -188,7 +187,7 @@ function historicalResultCarrier(
 ): KiroUserInputMessage {
 	const images = [...ordinary.flatMap(historicalImages), ...group.results.flatMap(historicalImages)];
 	return {
-		...userMessage(content || TOOL_RESULT_CARRIER, modelId),
+		...userMessage(content, modelId),
 		...(images.length > 0 ? { images } : {}),
 		userInputMessageContext: { toolResults: group.results.map(result => toolResult(result, normalizeId)) },
 	};
@@ -305,8 +304,8 @@ export function transformKiroRequest(
 			currentImages = ordinaryImages(plan.current.group.messages);
 		}
 	}
-	if (currentContent.trim().length === 0)
-		currentContent = currentContext.toolResults ? TOOL_RESULT_CARRIER : CONTINUATION_PROMPT;
+	// Tool results need no text beside them: a filler sentence reads as a message from the user.
+	if (currentContent.trim().length === 0 && !currentContext.toolResults) currentContent = CONTINUATION_PROMPT;
 	const toolSpecs: KiroToolSpec[] = catalog.tools;
 	appendHistoricalToolPlaceholders(toolSpecs, history);
 	if (toolSpecs.length > 0) currentContext.tools = toolSpecs;

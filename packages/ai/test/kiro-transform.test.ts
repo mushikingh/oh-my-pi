@@ -475,7 +475,7 @@ describe("Kiro request transformation", () => {
 		expect(content).not.toContain("discarded hypothesis");
 	});
 
-	test("gives a structured historical tool result a carrier sentence", () => {
+	test("uses empty user content for structured historical tool results", () => {
 		const context: Context = {
 			messages: [
 				{ role: "user", content: "Start", timestamp: 0 },
@@ -490,7 +490,7 @@ describe("Kiro request transformation", () => {
 			entry => entry.userInputMessage?.userInputMessageContext?.toolResults,
 		)?.userInputMessage;
 
-		expect(carrier?.content).toBe("The requested tool result is attached.");
+		expect(carrier?.content).toBe("");
 		expect(carrier?.userInputMessageContext?.toolResults).toHaveLength(1);
 	});
 

@@ -81,7 +81,7 @@ Kiro's wire is stricter than most providers, so OMP adapts each request rather t
 
 ## Using Kiro for the advisor
 
-A reviewer with nothing to flag often returns reasoning and no text. For the advisor that is a completed review, so OMP accepts it; on a normal turn the same reply is treated as a missing answer and retried.
+A reviewer with nothing to flag often returns reasoning and no text, or nothing at all. For the advisor that is a completed review, so OMP accepts it; on a normal turn the same reply is treated as a missing answer and retried.
 
 ## Failures that change what happens next
 

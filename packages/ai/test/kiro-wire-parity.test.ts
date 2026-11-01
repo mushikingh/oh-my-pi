@@ -340,6 +340,7 @@ describe("Kiro empty tool results", () => {
 		expect(current.userInputMessageContext?.toolResults?.[0]?.content).toEqual([
 			{ text: "The tool completed without textual output." },
 		]);
-		expect(current.content).toBe("The requested tool result is attached.");
+		// Filler here reads as a user message: a model once told the user no attachment had arrived.
+		expect(current.content).toBe("");
 	});
 });
