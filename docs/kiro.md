@@ -75,9 +75,13 @@ Kiro's wire is stricter than most providers, so OMP adapts each request rather t
 
 - **Tool names** outside `^[a-zA-Z0-9_-]{1,64}$`, which MCP names often are, go out under a safe alias and come back under their real name.
 - **Tool schemas** lose the JSON Schema keywords the validator rejects (`pattern`, `format`, `minLength`, `additionalProperties` and similar), and a root `oneOf`, `anyOf` or `allOf` is flattened. OMP still validates arguments itself.
-- **Tool catalogs** hold at most 48 tools and 96 KB, filled in order. The model is told which tools did not fit that turn. Descriptions are cut at 9,216 characters.
+- **Tool catalogs** hold at most 500 tools and 512 KB, filled in order, because the runtime rejects a catalog of 1.2 MB. The model is told which tools did not fit that turn.
 - **Images** stay in history. A request holds at most 20 per message, 100 overall and 18 MiB of image data. The oldest go first, and each affected message says so.
 - **Reasoning** is replayed on the next turn, but only to the model that wrote it.
+
+## Using Kiro for the advisor
+
+A reviewer with nothing to flag often returns reasoning and no text. For the advisor that is a completed review, so OMP accepts it; on a normal turn the same reply is treated as a missing answer and retried.
 
 ## Failures that change what happens next
 

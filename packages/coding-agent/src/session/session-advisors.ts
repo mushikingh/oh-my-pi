@@ -1449,7 +1449,8 @@ export class SessionAdvisors {
 				if (
 					requestModel.api === "google-generative-ai" ||
 					requestModel.api === "google-gemini-cli" ||
-					requestModel.api === "google-vertex"
+					requestModel.api === "google-vertex" ||
+					requestModel.api === "kiro-api"
 				) {
 					return baseAdvisorStreamFn(requestModel, context, { ...options, acceptEmptyResponse: true });
 				}

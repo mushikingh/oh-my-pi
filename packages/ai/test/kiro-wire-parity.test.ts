@@ -8,7 +8,6 @@ import {
 	KIRO_MAX_IMAGES_PER_REQUEST,
 	KIRO_MAX_TOOL_CATALOG_BYTES,
 	KIRO_MAX_TOOL_COUNT,
-	KIRO_MAX_TOOL_DESCRIPTION_CHARS,
 	sanitizeKiroSchema,
 	transformKiroRequest,
 } from "@oh-my-pi/pi-ai/providers/kiro/index";
@@ -189,29 +188,27 @@ describe("Kiro tool budget", () => {
 		const current = request.conversationState.currentMessage.userInputMessage;
 		expect(current.userInputMessageContext?.tools).toHaveLength(KIRO_MAX_TOOL_COUNT);
 		expect(current.content).toContain(`allows ${KIRO_MAX_TOOL_COUNT} of ${KIRO_MAX_TOOL_COUNT + 3} tools`);
-		expect(current.content).toContain("tool_48, tool_49, tool_50");
+		expect(current.content).toContain(`tool_${KIRO_MAX_TOOL_COUNT}, tool_${KIRO_MAX_TOOL_COUNT + 1}`);
 		expect(current.content).toContain("Go");
 	});
 
 	test("skips a tool that does not fit the bytes and still admits smaller ones after it", () => {
-		const filler = "d".repeat(9_000);
-		const large = Array.from({ length: 12 }, (_, index) => tool(`large_${index}`, filler));
+		const filler = "d".repeat(KIRO_MAX_TOOL_CATALOG_BYTES / 4);
+		const large = Array.from({ length: 5 }, (_, index) => tool(`large_${index}`, filler));
 		const specs = currentTools({ messages: [user("Go")], tools: [...large, tool("small")] });
 		const names = specs.map(spec => spec.toolSpecification.name);
 		expect(names).toContain("small");
-		expect(names.length).toBeLessThan(13);
+		expect(names).not.toContain("large_4");
 		expect(new TextEncoder().encode(JSON.stringify(specs)).byteLength).toBeLessThanOrEqual(
 			KIRO_MAX_TOOL_CATALOG_BYTES,
 		);
 	});
 
-	test("cuts an oversized description without leaving half a surrogate pair", () => {
-		const description = `${"d".repeat(KIRO_MAX_TOOL_DESCRIPTION_CHARS - 2)}😀${"d".repeat(50)}`;
+	test("sends a long description whole", () => {
+		const description = "d".repeat(40_000);
 		const sent = currentTools({ messages: [user("Go")], tools: [tool("big", description)] })[0]?.toolSpecification
 			.description;
-		expect(sent?.length).toBeLessThanOrEqual(KIRO_MAX_TOOL_DESCRIPTION_CHARS);
-		expect(sent).toEndWith("…");
-		expect(sent?.isWellFormed()).toBe(true);
+		expect(sent).toBe(description);
 	});
 
 	test("offers no tools when tool choice is none", () => {

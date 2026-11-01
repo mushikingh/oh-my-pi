@@ -4,11 +4,13 @@ import { toolWireSchema } from "../../utils/schema/wire";
 import omittedToolsPrompt from "./prompts/omitted-tools.md" with { type: "text" };
 import type { KiroToolSpec } from "./types";
 
-/** A successful probe sent 49 tools at about 108 KiB; stay under it, leaving room for the enclosing request. */
-export const KIRO_MAX_TOOL_COUNT = 48;
-export const KIRO_MAX_TOOL_CATALOG_BYTES = 96_000;
-/** The largest description measured as accepted, on gpt-5.6-sol. Longer ones are cut rather than risk a rejected turn. */
-export const KIRO_MAX_TOOL_DESCRIPTION_CHARS = 9_216;
+/**
+ * Measured against the live runtime in November 2026: 500 small tools and 600 KB catalogs are
+ * accepted on Claude and GPT models, while 1.2 MB is rejected as "Input content length exceeds
+ * threshold". The byte budget stays under the measured pass and leaves room for the conversation.
+ */
+export const KIRO_MAX_TOOL_COUNT = 500;
+export const KIRO_MAX_TOOL_CATALOG_BYTES = 512 * 1024;
 
 const KIRO_TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const OMITTED_NAMES_SHOWN = 12;
@@ -119,15 +121,6 @@ export function ensureRootObjectSchema(schema: unknown): Record<string, unknown>
 	};
 }
 
-function truncateDescription(description: string): string {
-	if (description.length <= KIRO_MAX_TOOL_DESCRIPTION_CHARS) return description;
-	let end = KIRO_MAX_TOOL_DESCRIPTION_CHARS - 1;
-	// Never end on a lone high surrogate.
-	const last = description.charCodeAt(end - 1);
-	if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-	return `${description.slice(0, end)}…`;
-}
-
 export interface KiroToolNames {
 	/** The wire-safe name for a tool, registered on first use. */
 	alias(name: string): string;
@@ -185,7 +178,7 @@ export function convertKiroTools(tools: readonly Tool[], names: KiroToolNames): 
 		const spec: KiroToolSpec = {
 			toolSpecification: {
 				name: names.alias(tool.name),
-				description: truncateDescription(tool.description || `Tool: ${tool.name}`),
+				description: tool.description || `Tool: ${tool.name}`,
 				inputSchema: { json: ensureRootObjectSchema(sanitizeKiroSchema(toolWireSchema(tool))) },
 			},
 		};

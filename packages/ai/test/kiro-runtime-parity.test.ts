@@ -171,6 +171,23 @@ describe("Kiro content filter stops", () => {
 });
 
 describe("Kiro reasoning capture", () => {
+	test("a reasoning-only reply is a completed turn for a caller that accepts silence", async () => {
+		const respond = () =>
+			scripted(eventResponse(frame("reasoningContentEvent", { text: "Nothing to flag.", signature: "CAQS" })));
+		const silent = await streamKiro(createModel(), CONTEXT, {
+			apiKey: API_KEY,
+			fetch: respond().fetch,
+			acceptEmptyResponse: true,
+		}).result();
+		expect(silent.stopReason).toBe("stop");
+		const interactive = await streamKiro(createModel(), CONTEXT, {
+			apiKey: API_KEY,
+			fetch: respond().fetch,
+		}).result();
+		expect(interactive.stopReason).toBe("error");
+		expect(AIError.is(AIError.classifyMessage(interactive), AIError.Flag.EmptyResponse)).toBe(true);
+	});
+
 	test("keeps a signature that arrives after its block closed", async () => {
 		const { fetch } = scripted(
 			eventResponse(
