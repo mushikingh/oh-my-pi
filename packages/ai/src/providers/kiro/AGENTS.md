@@ -10,18 +10,24 @@
 
 ## Keeping up with upstream
 
-`scripts/fork-sync.sh` does the whole job, every 6 hours through `oh-my-pi-fork-sync.timer`:
+Sync by hand every now and then, on purpose: a person chooses when to take upstream changes, and can test Kiro live afterwards. There is no timer.
+
+```sh
+~/git-mushi/oh-my-pi/scripts/fork-sync.sh
+```
+
+The script:
 
 1. Syncs the fork's `main` from upstream.
 2. Merges `main` into a separate worktree, `~/git-mushi/oh-my-pi-sync`, so a running `omp` is not disturbed.
 3. Regenerates the compat files, then runs the typecheck and Kiro tests.
 4. Pushes only if all of that passed, then updates the main checkout if it is clean and no `omp` is running.
 
-Check on it with `systemctl --user list-timers oh-my-pi-fork-sync.timer` and `journalctl --user -u oh-my-pi-fork-sync.service -n 50`. A failed run pushes nothing and leaves the fork as it was.
+A failed run pushes nothing to the Kiro branch, though `main` may already have moved, which is harmless. After a successful merge, run the live check under "Testing against real Kiro", because the script's tests use fake responses.
 
 ### When the sync stops on a conflict
 
-The log names the files. Resolve it in the sync worktree, keeping upstream's newer code and adding Kiro back on top:
+The script names the files. Resolve it in the sync worktree, keeping upstream's newer code and adding Kiro back on top:
 
 ```sh
 cd ~/git-mushi/oh-my-pi-sync

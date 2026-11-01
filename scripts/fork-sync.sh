@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mirrors upstream to this fork's main, then merges main into the Kiro branch.
+# Run by hand: mirrors upstream to this fork's main, then merges main into the Kiro branch.
 # Pushes only when the merge and checks pass, so a failure leaves the fork untouched.
 # Guide: packages/ai/src/providers/kiro/AGENTS.md
 set -eu
